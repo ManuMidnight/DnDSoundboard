@@ -8,10 +8,9 @@
     <link rel="icon" type="image/png" href="logo.png">
     <link rel="apple-touch-icon" href="logo.png">
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>    
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
 
     <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Cinzel:wght@400;700&display=swap" rel="stylesheet">
     
     <style>
@@ -64,6 +63,468 @@
             transform: scale(1.15) translateY(2px); /* Ingrandisce e sposta per ritagliare i bordi */
         }
 
+        .category-header {
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(0,0,0,0.05);
+            cursor: pointer;
+            gap: 10px;
+        }
+
+        .category-content {
+            display: none;
+            padding: 1rem;
+            border-top: 1px solid rgba(0,0,0,0.1);
+        }
+
+        .category-content.active {
+            display: block;
+        }
+
+        .sound-card {
+            background: #3d2b1f;
+            border: 2px solid var(--gold);
+            border-radius: 10px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            color: var(--parchment);
+        }
+
+        .sound-card.playing {
+            background: var(--blood);
+            box-shadow: 0 0 15px var(--blood);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.8; }
+            100% { opacity: 1; }
+        }
+
+        .volume-slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            background: #2d1e12;
+            border-radius: 10px;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: var(--gold);
+            border-radius: 50%;
+        }
+
+        input[type="file"] { display: none; }
+        
+        .loader {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid var(--gold);
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        button {
+            min-height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .category-name-input {
+            background: transparent;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.875rem;
+            border: none;
+            flex: 1;
+            min-width: 0;
+            padding: 4px 0;
+        }
+        
+        .category-name-input:focus {
+            outline: none;
+            border-bottom: 1px solid var(--gold);
+        }
+
+        /* Trascinamento: tieni premuto sull'icona */
+        .drag-handle {
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: manipulation;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+        }
+
+        .sortable-ghost {
+            opacity: 0.4;
+        }
+
+        .drag-handle:active {
+            cursor: grabbing;
+            transform: scale(0.96);
+        }
+    </style>
+</head>
+<body class="p-3">
+
+    <div class="max-w-md mx-auto">
+        <header class="text-center mb-6">
+            <div class="flex justify-center mb-2">
+                <div class="logo-container">
+                    <img src="logo.png" class="logo-image" alt="Logo D&D Soundboard">
+                </div>
+            </div>
+            <h1 class="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-b from-yellow-200 to-yellow-600 medieval-font uppercase">
+                D&D Soundboard
+            </h1>
+            <p id="storage-info" class="text-[8px] text-yellow-600/60 tracking-widest uppercase mt-1">Sincronizzazione Grimorio...</p>
+        </header>
+
+        <div class="flex gap-2 mb-6">
+            <button onclick="stopAll()" class="flex-1 bg-red-900 border-2 border-red-600 text-white font-bold text-xs py-3 rounded-lg shadow-lg">
+                SILENZIO 🔇
+            </button>
+            <button onclick="addCategory()" class="flex-1 bg-stone-800 border-2 border-yellow-600 text-yellow-500 font-bold text-xs py-3 rounded-lg shadow-lg">
+                + CATEGORIA 📁
+            </button>
+        </div>
+
+        <div id="category-list">
+            <!-- Categorie renderizzate qui -->
+        </div>
+    </div>
+
+    <script>
+        let db;
+        let appData = { categories: [], openCategories: [] };
+        let audioPlayers = {};
+        let lastDragAt = 0;
+        let sortableCategories = null;
+        let sortableSlots = [];
+
+        // Inizializzazione DB
+        const request = indexedDB.open("DnDSoundboardMobile", 1);
+        request.onupgradeneeded = (e) => {
+            db = e.target.result;
+            if (!db.objectStoreNames.contains("sounds")) db.createObjectStore("sounds", { keyPath: "id" });
+        };
+        request.onsuccess = (e) => {
+            db = e.target.result;
+            loadApp();
+        };
+
+        function loadApp() {
+            const saved = localStorage.getItem('dnd_mobile_v1');
+            if (saved) {
+                appData = JSON.parse(saved);
+            } else {
+                appData.categories = [
+                    { id: 'c1', name: 'Combattimento Epico', slots: [{ id: 's1', name: 'Acciaio', volume: 0.7, loop: false }] },
+                    { id: 'c2', name: 'Atmosfera Taverna', slots: [{ id: 's2', name: 'Fuoco', volume: 0.7, loop: false }] }
+                ];
+                appData.openCategories = ['c1'];
+            }
+            render();
+            checkStorage();
+        }
+
+function initSortable() {
+    // Evita doppie inizializzazioni dopo i render()
+    if (sortableCategories) sortableCategories.destroy();
+    sortableSlots.forEach(s => s.destroy());
+    sortableSlots = [];
+
+    const catList = document.getElementById('category-list');
+    sortableCategories = Sortable.create(catList, {
+        animation: 150,
+        handle: '.category-header',
+        draggable: '.pergamena',
+        group: { name: 'categories', pull: true, put: false }, // non accetta elementi esterni
+        delay: 250,               // "tieni premuto"
+        delayOnTouchOnly: false,  // vale anche con mouse
+        touchStartThreshold: 10,
+        scroll: true,
+        scrollSensitivity: 60,
+        scrollSpeed: 10,
+        onStart: function () { lastDragAt = Date.now(); },
+        onChoose: function () { lastDragAt = Date.now(); },
+        onEnd: function () {
+            lastDragAt = Date.now();
+            const newOrder = Array.from(catList.children).map(child => child.getAttribute('data-id'));
+            appData.categories = newOrder.map(id => appData.categories.find(c => c.id === id)).filter(Boolean);
+            save();
+        }
+    });
+
+    const buildSlotMap = () => {
+        const m = new Map();
+        appData.categories.forEach(c => (c.slots || []).forEach(s => m.set(s.id, s)));
+        return m;
+    };
+
+    const syncContainer = (container, slotMap) => {
+        if (!container) return;
+        const catId = container.getAttribute('data-catid');
+        const cat = appData.categories.find(c => c.id === catId);
+        if (!cat) return;
+        const m = slotMap || buildSlotMap();
+        const ids = Array.from(container.children).map(child => child.getAttribute('data-id')).filter(Boolean);
+        cat.slots = ids.map(id => m.get(id)).filter(Boolean);
+    };
+
+    // Riordinamento/Spazio tra categorie dei Suoni (Slot)
+    document.querySelectorAll('.slot-container').forEach(container => {
+        const inst = Sortable.create(container, {
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            chosenClass: 'opacity-80',
+            handle: '.drag-handle', // trascina dall'icona
+            draggable: '.sound-card', // accetta/trascina solo i suoni, mai le categorie
+            delay: 250,             // "tieni premuto"
+            delayOnTouchOnly: false,
+            touchStartThreshold: 10,
+            scroll: true,
+            scrollSensitivity: 60,
+            scrollSpeed: 10,
+            forceFallback: true,
+            fallbackOnBody: true,
+            group: { name: 'slots', pull: true, put: ['slots'] }, // solo tra slot-container
+            onStart: function () { lastDragAt = Date.now(); },
+            onChoose: function () { lastDragAt = Date.now(); },
+            onEnd: function (evt) {
+                lastDragAt = Date.now();
+                const slotMap = buildSlotMap(); // snapshot pre-sync per spostamenti tra categorie
+                syncContainer(evt.from, slotMap);
+                if (evt.to && evt.to !== evt.from) syncContainer(evt.to, slotMap);
+                save();
+            }
+        });
+        sortableSlots.push(inst);
+    });
+}
+
+// Evita menu contestuale su pressione lunga (mobile)
+document.addEventListener('contextmenu', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.drag-handle')) {
+        e.preventDefault();
+    }
+});
+
+function save() {
+    localStorage.setItem('dnd_mobile_v1', JSON.stringify(appData));
+}
+
+function render() {
+    const list = document.getElementById('category-list');
+    list.innerHTML = '';
+
+    appData.categories.forEach(cat => {
+        const isOpen = appData.openCategories.includes(cat.id);
+        const section = document.createElement('div');
+        section.className = 'pergamena';
+        section.setAttribute('data-id', cat.id); // Necessario per il salvataggio ordine
+        
+        section.innerHTML = `
+            <div class="category-header" onclick="toggleCategory('${cat.id}')">
+                <div class="flex items-center gap-2 flex-1 min-width-0">
+                    <span class="text-lg transition-transform ${isOpen ? 'rotate-90' : ''}">▶</span>
+                    <input type="text" value="${cat.name}" class="category-name-input" 
+                           onclick="event.stopPropagation()" onchange="updateCatName('${cat.id}', this.value)"
+                           placeholder="Nome Categoria">
+                </div>
+                <div class="flex gap-2 shrink-0" onclick="event.stopPropagation()">
+                     <button onclick="addSlot('${cat.id}')" class="w-8 h-8 bg-stone-800 text-yellow-500 rounded-full text-lg">+</button>
+                     <button onclick="deleteCategory('${cat.id}')" class="w-8 h-8 bg-red-900/20 text-red-700 rounded-full text-xs">🗑️</button>
+                </div>
+            </div>
+            <div class="category-content ${isOpen ? 'active' : ''}">
+                <div class="grid grid-cols-2 gap-3 slot-container" data-catid="${cat.id}">
+                    ${cat.slots.map(slot => `
+                        <div id="card-${slot.id}" data-id="${slot.id}" class="sound-card">
+                            <input type="text" value="${slot.name}" class="bg-transparent text-[10px] text-center uppercase font-bold border-b border-yellow-900/20"
+                                   onchange="updateSlot('${cat.id}', '${slot.id}', 'name', this.value)">
+                            
+                            <div class="py-4 flex flex-col items-center justify-center bg-black/30 rounded" onclick="handlePlay('${slot.id}', '${cat.id}')">
+                                <span id="icon-${slot.id}" class="text-2xl drag-handle">📜</span>
+                                <div id="loader-${slot.id}" class="loader"></div>
+                            </div>
+
+                            <input type="range" class="volume-slider" min="0" max="1" step="0.1" value="${slot.volume}" 
+                                   onchange="updateSlot('${cat.id}', '${slot.id}', 'volume', this.value)">
+                            
+                            <div class="flex gap-1">
+                                <button onclick="toggleLoop('${cat.id}', '${slot.id}')" class="flex-1 text-[8px] bg-stone-900 rounded py-1 border border-stone-700">
+                                    LOOP: <span class="${slot.loop ? 'text-green-500' : 'text-red-500'}">${slot.loop ? 'ON' : 'OFF'}</span>
+                                </button>
+                                <button onclick="deleteSlot('${cat.id}', '${slot.id}')" class="bg-red-900/30 px-2 rounded">🗑️</button>
+                            </div>
+
+                            <label class="bg-stone-800 text-[8px] py-1 text-center rounded border border-stone-600 uppercase font-bold cursor-pointer">
+                                Incastona Frammento Sonoro
+                                <input type="file" accept="audio/*" onchange="saveAudio('${slot.id}', this)">
+                            </label>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+        list.appendChild(section);
+        cat.slots.forEach(s => loadAudioFromDB(s.id));
+    });
+
+    // Dopo ogni render, re-inizializza il drag & drop (categorie + suoni)
+    initSortable();
+}
+
+function toggleCategory(id) {
+    if (Date.now() - lastDragAt < 300) return; // evita tap fantasma dopo drag
+    const index = appData.openCategories.indexOf(id);
+    if (index > -1) appData.openCategories.splice(index, 1);
+    else appData.openCategories.push(id);
+    save();
+    render();
+}
+
+        function addCategory() {
+            const id = 'c' + Date.now();
+            appData.categories.push({ id, name: 'Nuova Lista', slots: [] });
+            appData.openCategories.push(id);
+            save();
+            render();
+        }
+
+        function updateCatName(id, name) {
+            const cat = appData.categories.find(c => c.id === id);
+            if (cat) cat.name = name;
+            save();
+        }
+
+        function deleteCategory(id) {
+            if (!confirm("Eliminare l'intera categoria?")) return;
+            appData.categories = appData.categories.filter(c => c.id !== id);
+            save();
+            render();
+        }
+
+        function addSlot(catId) {
+            const cat = appData.categories.find(c => c.id === catId);
+            cat.slots.push({ id: 's' + Date.now(), name: 'Nuovo', volume: 0.7, loop: false });
+            save();
+            render();
+        }
+
+        function updateSlot(catId, slotId, key, val) {
+            const cat = appData.categories.find(c => c.id === catId);
+            const slot = cat.slots.find(s => s.id === slotId);
+            slot[key] = key === 'volume' ? parseFloat(val) : val;
+            save();
+            if (key === 'volume' && audioPlayers[slotId]) audioPlayers[slotId].volume = slot[key];
+        }
+
+        function toggleLoop(catId, slotId) {
+            const cat = appData.categories.find(c => c.id === catId);
+            const slot = cat.slots.find(s => s.id === slotId);
+            slot.loop = !slot.loop;
+            save();
+            render();
+        }
+
+        function deleteSlot(catId, slotId) {
+            const cat = appData.categories.find(c => c.id === catId);
+            cat.slots = cat.slots.filter(s => s.id !== slotId);
+            save();
+            render();
+        }
+
+        function saveAudio(id, input) {
+            const file = input.files[0];
+            if (!file) return;
+            document.getElementById(`loader-${id}`).style.display = 'block';
+            document.getElementById(`icon-${id}`).style.display = 'none';
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const transaction = db.transaction(["sounds"], "readwrite");
+                transaction.objectStore("sounds").put({ id, data: e.target.result, type: file.type });
+                transaction.oncomplete = () => {
+                    document.getElementById(`loader-${id}`).style.display = 'none';
+                    document.getElementById(`icon-${id}`).style.display = 'block';
+                    loadAudioFromDB(id);
+                    checkStorage();
+                };
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function loadAudioFromDB(id) {
+            const request = db.transaction(["sounds"], "readonly").objectStore("sounds").get(id);
+            request.onsuccess = () => {
+                if (request.result) {
+                    const url = URL.createObjectURL(new Blob([request.result.data], { type: request.result.type }));
+                    audioPlayers[id] = new Audio(url);
+                    const icon = document.getElementById(`icon-${id}`);
+                    if (icon) icon.innerText = "📜";
+                }
+            };
+        }
+
+        function handlePlay(id, catId) {
+            if (Date.now() - lastDragAt < 300) return; // evita play al rilascio dopo drag
+            const player = audioPlayers[id];
+            if (!player) return;
+            const slot = appData.categories.find(c => c.id === catId).slots.find(s => s.id === id);
+            const card = document.getElementById(`card-${id}`);
+            
+            if (player.paused) {
+                player.volume = slot.volume;
+                player.loop = slot.loop;
+                player.play();
+                card.classList.add('playing');
+                document.getElementById(`icon-${id}`).innerText = "🔊";
+            } else {
+                player.pause();
+                player.currentTime = 0;
+                card.classList.remove('playing');
+                document.getElementById(`icon-${id}`).innerText = "📜";
+            }
+            player.onended = () => { if(!slot.loop) { card.classList.remove('playing'); document.getElementById(`icon-${id}`).innerText = "📜"; } };
+        }
+
+        function stopAll() {
+            Object.values(audioPlayers).forEach(p => { p.pause(); p.currentTime = 0; });
+            document.querySelectorAll('.sound-card').forEach(c => c.classList.remove('playing'));
+            document.querySelectorAll('[id^="icon-"]').forEach(i => i.innerText = "📜");
+        }
+
+        function checkStorage() {
+            if (navigator.storage && navigator.storage.estimate) {
+                navigator.storage.estimate().then(est => {
+                    const used = Math.round(est.usage / 1024 / 1024);
+                    document.getElementById('storage-info').innerText = `MEMORIA GRIMORIO: ${used}MB`;
+                });
+            }
+        }
+    </script>
+</body>
+</html>
         .category-header {
             padding: 1rem;
             display: flex;
