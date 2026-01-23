@@ -7,8 +7,11 @@
     
     <link rel="icon" type="image/png" href="logo.png">
     <link rel="apple-touch-icon" href="logo.png">
-    
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>    
+
     <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Cinzel:wght@400;700&display=swap" rel="stylesheet">
     
     <style>
@@ -42,7 +45,7 @@
         }
 
         /* Container del logo ritagliato per nascondere la scritta */
-        .logo-container {
+       .logo-container {
     width: 100px;
     max-width: 70%;
     margin: 0 auto;
@@ -215,8 +218,41 @@
             }
             render();
             checkStorage();
+	    initSortable()
         }
 
+function initSortable() {
+    const catList = document.getElementById('category-list');
+    Sortable.create(catList, {
+        animation: 150,
+        handle: '.category-header',
+        onEnd: function () {
+            const newOrder = Array.from(catList.children).map(child => child.getAttribute('data-id'));
+            appData.categories = newOrder.map(id => appData.categories.find(c => c.id === id));
+            save();
+        }
+    });
+
+    // Riordinamento Suoni (Slot)
+    document.querySelectorAll('.slot-container').forEach(container => {
+        Sortable.create(container, {
+            animation: 150,
+            ghostClass: 'opacity-50',
+            onEnd: function (evt) {
+                const catId = container.getAttribute('data-catid');
+                const cat = appData.categories.find(c => c.id === catId);
+                const newSlotOrder = Array.from(container.children).map(child => child.getAttribute('data-id'));
+                
+                cat.slots = newSlotOrder.map(id => cat.slots.find(s => s.id === id));
+                save();
+            }
+        });
+    });
+}
+
+function save() {
+    localStorage.setItem('dnd_mobile_v1', JSON.stringify(appData));
+}
         function save() {
             localStorage.setItem('dnd_mobile_v1', JSON.stringify(appData));
         }
@@ -229,7 +265,8 @@
                 const isOpen = appData.openCategories.includes(cat.id);
                 const section = document.createElement('div');
                 section.className = 'pergamena';
-                
+                section.setAttribute('data-id', cat.id);
+
                 section.innerHTML = `
                     <div class="category-header" onclick="toggleCategory('${cat.id}')">
                         <div class="flex items-center gap-2 flex-1 min-width-0">
@@ -244,9 +281,11 @@
                         </div>
                     </div>
                     <div class="category-content ${isOpen ? 'active' : ''}">
-                        <div class="grid grid-cols-2 gap-3">
+    <div class="grid grid-cols-2 gap-3 slot-container" data-catid="${cat.id}">
                             ${cat.slots.map(slot => `
-                                <div id="card-${slot.id}" class="sound-card">
+                                ${cat.slots.map(slot => `
+    <div id="card-${slot.id}" data-id="${slot.id}" class="sound-card"> 
+    `).join('')}
                                     <input type="text" value="${slot.name}" class="bg-transparent text-[10px] text-center uppercase font-bold border-b border-yellow-900/20"
                                            onchange="updateSlot('${cat.id}', '${slot.id}', 'name', this.value)">
                                     
